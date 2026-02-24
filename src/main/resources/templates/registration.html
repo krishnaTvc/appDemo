@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>User Registration</title>
+    <style>
+        /* ---- Google Font ---- */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 48px 40px;
+            width: 100%;
+            max-width: 480px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.4);
+        }
+
+        .title {
+            text-align: center;
+            margin-bottom: 36px;
+        }
+
+        .title h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, #e96ff0, #7b6eff, #4fc3f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .title p {
+            color: rgba(255,255,255,0.5);
+            font-size: 0.9rem;
+            margin-top: 6px;
+        }
+
+        .form-group {
+            margin-bottom: 22px;
+        }
+
+        label {
+            display: block;
+            color: rgba(255,255,255,0.8);
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 13px 16px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 10px;
+            color: #fff;
+            font-size: 0.95rem;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            transition: border-color 0.25s, box-shadow 0.25s;
+        }
+
+        input::placeholder { color: rgba(255,255,255,0.3); }
+
+        input:focus, select:focus {
+            border-color: #7b6eff;
+            box-shadow: 0 0 0 3px rgba(123,110,255,0.2);
+        }
+
+        select option { background: #1a1a2e; color: #fff; }
+
+        .error-msg {
+            color: #ff6b6b;
+            font-size: 0.8rem;
+            margin-top: 5px;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 14px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
+        .btn:active { transform: translateY(0); }
+
+        .btn-submit {
+            background: linear-gradient(135deg, #7b6eff, #e96ff0);
+            color: #fff;
+        }
+
+        .btn-clear {
+            background: rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.7);
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div class="title">
+        <h1>Registration Form</h1>
+        <p>Fill in your details below to register</p>
+    </div>
+
+    <form id="registrationForm" th:action="@{/register}" th:object="${registration}" method="post" novalidate>
+
+        <!-- Name -->
+        <div class="form-group">
+            <label for="name">Full Name</label>
+            <input type="text" id="name" th:field="*{name}"
+                   placeholder="Enter your full name" autocomplete="off"/>
+            <div class="error-msg" th:if="${#fields.hasErrors('name')}"
+                 th:errors="*{name}"></div>
+        </div>
+
+        <!-- State -->
+        <div class="form-group">
+            <label for="state">State</label>
+            <input type="text" id="state" th:field="*{state}"
+                   placeholder="Enter your state" autocomplete="off"/>
+            <div class="error-msg" th:if="${#fields.hasErrors('state')}"
+                 th:errors="*{state}"></div>
+        </div>
+
+        <!-- Country -->
+        <div class="form-group">
+            <label for="country">Country</label>
+            <select id="country" th:field="*{country}">
+                <option value="">-- Select Country --</option>
+                <option value="India">India</option>
+                <option value="United States">United States</option>
+                <option value="United Kingdom">United Kingdom</option>
+                <option value="Canada">Canada</option>
+                <option value="Australia">Australia</option>
+                <option value="Germany">Germany</option>
+                <option value="France">France</option>
+                <option value="Japan">Japan</option>
+                <option value="Singapore">Singapore</option>
+                <option value="Other">Other</option>
+            </select>
+            <div class="error-msg" th:if="${#fields.hasErrors('country')}"
+                 th:errors="*{country}"></div>
+        </div>
+
+        <!-- Buttons -->
+        <div class="btn-row">
+            <button type="submit" id="submitBtn" class="btn btn-submit">Submit</button>
+            <button type="button" id="clearBtn" class="btn btn-clear"
+                    onclick="document.getElementById('registrationForm').reset();">Clear</button>
+        </div>
+
+    </form>
+</div>
+
+</body>
+</html>

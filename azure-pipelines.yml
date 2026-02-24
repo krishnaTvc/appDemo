@@ -1,0 +1,217 @@
+# Azure Pipelines – Spring Boot Registration App
+# Covers: Build → Unit Test → Package → Deploy to Ubuntu 24.04 Azure VM
+#
+# Prerequisites in Azure DevOps:
+#   1. Secret pipeline variable: DB_PASSWORD
+#   2. SSH service connection named: AzureVM-SSH
+#   3. Variable: VM_HOST (public IP of your Azure VM)
+#   4. Variable: VM_USER (Linux username, e.g. azureuser)
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  MAVEN_CACHE_FOLDER: $(Pipeline.Workspace)/.m2/repository
+  MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+  JAR_NAME: appDemo.jar
+  DEPLOY_DIR: /opt/appDemo
+
+stages:
+
+# ════════════════════════════════════════════════════════
+# STAGE 1 – BUILD & TEST
+# ════════════════════════════════════════════════════════
+- stage: Build
+  displayName: 'Build & Test'
+  jobs:
+  - job: BuildJob
+    displayName: 'Maven Build, Unit Tests & Package'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+    # Cache Maven dependencies for faster builds
+    - task: Cache@2
+      displayName: 'Cache Maven repo'
+      inputs:
+        key: 'maven | "$(Agent.OS)" | **/pom.xml'
+        restoreKeys: |
+          maven | "$(Agent.OS)"
+        path: $(MAVEN_CACHE_FOLDER)
+
+    - task: JavaToolInstaller@0
+      displayName: 'Use Java 17'
+      inputs:
+        versionSpec: '17'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
+
+    # 1) Unit tests (MockMvc, no real DB needed – uses H2 via application-test.yaml)
+    - task: Maven@4
+      displayName: 'mvn clean test (unit tests)'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'clean test'
+        options: '$(MAVEN_OPTS)'
+        publishJUnitResults: true
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '1.17'
+
+    # 2) Package – skip unit tests here (already run above)
+    - task: Maven@4
+      displayName: 'mvn package -DskipTests'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'package -DskipTests'
+        options: '$(MAVEN_OPTS)'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '1.17'
+
+    # Publish JAR as pipeline artifact
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish JAR artifact'
+      inputs:
+        targetPath: '$(System.DefaultWorkingDirectory)/target/$(JAR_NAME)'
+        artifact: 'appJar'
+        publishLocation: 'pipeline'
+
+    # Publish Surefire test reports
+    - task: PublishTestResults@2
+      displayName: 'Publish unit test results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        mergeTestResults: true
+        testRunTitle: 'Unit Tests'
+      condition: always()
+
+# ════════════════════════════════════════════════════════
+# STAGE 2 – SELENIUM INTEGRATION TESTS (optional – runs on hosted agent)
+# Comment out this stage if you do not have a UI to test yet
+# ════════════════════════════════════════════════════════
+- stage: IntegrationTest
+  displayName: 'Selenium Integration Tests'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - job: SeleniumJob
+    displayName: 'Start app + Run Selenium Tests'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: JavaToolInstaller@0
+      displayName: 'Use Java 17'
+      inputs:
+        versionSpec: '17'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
+
+    # Install MySQL on hosted agent (needed for integration test)
+    - script: |
+        sudo apt-get update -qq
+        sudo apt-get install -y mysql-server
+        sudo systemctl start mysql
+        sudo mysql -e "CREATE DATABASE IF NOT EXISTS registrationdb;"
+        sudo mysql -e "CREATE USER IF NOT EXISTS 'appuser'@'localhost' IDENTIFIED BY '$(DB_PASSWORD)';"
+        sudo mysql -e "GRANT ALL PRIVILEGES ON registrationdb.* TO 'appuser'@'localhost';"
+        sudo mysql -e "FLUSH PRIVILEGES;"
+      displayName: 'Install & configure MySQL'
+
+    # Install ChromeDriver
+    - script: |
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+        which chromedriver
+      displayName: 'Install Chrome & ChromeDriver'
+
+    # Download JAR artifact
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        artifactName: 'appJar'
+        targetPath: '$(System.DefaultWorkingDirectory)'
+
+    # Start Spring Boot app in background
+    - script: |
+        nohup java -jar $(System.DefaultWorkingDirectory)/$(JAR_NAME) \
+          --spring.datasource.password=$(DB_PASSWORD) \
+          --server.port=8080 &
+        echo "Waiting for app to start..."
+        sleep 30
+        curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:8080/
+      displayName: 'Start Spring Boot app'
+
+    # Run Selenium tests via Failsafe
+    - task: Maven@4
+      displayName: 'mvn verify (Selenium tests)'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'failsafe:integration-test failsafe:verify'
+        options: '$(MAVEN_OPTS) -Dapp.url=http://localhost:8080'
+        publishJUnitResults: true
+        testResultsFiles: '**/failsafe-reports/TEST-*.xml'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '1.17'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Selenium test results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/failsafe-reports/*.xml'
+        testRunTitle: 'Selenium Sanity Tests'
+      condition: always()
+
+# ════════════════════════════════════════════════════════
+# STAGE 3 – DEPLOY to Azure VM (Ubuntu 24.04)
+# ════════════════════════════════════════════════════════
+- stage: Deploy
+  displayName: 'Deploy to Azure VM'
+  dependsOn: IntegrationTest
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployToVM
+    displayName: 'Deploy JAR to Ubuntu VM'
+    environment: 'production'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Download JAR
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifactName: 'appJar'
+              targetPath: '$(System.DefaultWorkingDirectory)'
+
+          # Copy JAR to VM via SSH
+          - task: CopyFilesOverSSH@0
+            displayName: 'SCP appDemo.jar to VM'
+            inputs:
+              sshEndpoint: 'AzureVM-SSH'
+              sourceFolder: '$(System.DefaultWorkingDirectory)'
+              contents: '$(JAR_NAME)'
+              targetFolder: '/tmp'
+              overwrite: true
+
+          # Copy deploy.sh to VM
+          - task: CopyFilesOverSSH@0
+            displayName: 'SCP deploy.sh to VM'
+            inputs:
+              sshEndpoint: 'AzureVM-SSH'
+              sourceFolder: '$(System.DefaultWorkingDirectory)'
+              contents: 'deploy.sh'
+              targetFolder: '/tmp'
+              overwrite: true
+
+          # Run deploy script on VM
+          - task: SSH@0
+            displayName: 'Run deploy.sh on VM'
+            inputs:
+              sshEndpoint: 'AzureVM-SSH'
+              runOptions: 'inline'
+              inline: |
+                chmod +x /tmp/deploy.sh
+                sudo DB_PASSWORD='$(DB_PASSWORD)' bash /tmp/deploy.sh
+              readyTimeout: '20000'
